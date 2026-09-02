@@ -1,0 +1,12 @@
+# Secrets — never commit. Your Intuit client secret + per-company refresh tokens.
+**/.env
+
+# Runtime / seeded into the companies volume
+companies/*/dist/
+companies/*/logs/
+companies/*/node_modules/
+**/node_modules/
+dist/
+
+.DS_Store
+*.log

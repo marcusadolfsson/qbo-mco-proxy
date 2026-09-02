@@ -1,0 +1,38 @@
+# QuickBooks Online MCP Gateway — one container, one port, one or many companies.
+#
+# Self-contained: a fresh clone can build directly (the Dockerfile clones the pinned upstream
+# Intuit server during build).
+#   docker compose -f docker/docker-compose.yml build
+#   docker compose -f docker/docker-compose.yml up -d
+#
+# The proxy (proxy/qbo-proxy.mjs) holds one stdio child per company and serves all client
+# sessions on :8200, routed by /<slug>/ path.
+#
+# SETUP: for each company, pick a label ("slug"), create companies/<slug>/.env from
+# .env.example, and list every slug in SLUGS below (space-separated).
+
+services:
+  qbo-mcp:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: qbo-mcp-gateway:latest
+    container_name: qbo-mcp
+    restart: unless-stopped
+    environment:
+      # >>> EDIT: one label per QuickBooks company; each needs companies/<slug>/.env <<<
+      SLUGS: "company-one company-two"
+      PORT: "8200"
+      # RESEED_CODE: "1"        # one run after an image rebuild to refresh seeded server code
+    volumes:
+      # repo-root/companies (gitignored) — put each company's .env at companies/<slug>/.env
+      - ../companies:/app/companies
+    ports:
+      - "8200:8200"            # the single front door (routed by /<slug>/ path)
+    healthcheck:
+      # checks the first slug; edit if you rename it
+      test: ["CMD", "sh", "-c", "node -e \"require('http').get('http://localhost:8200/'+(process.env.SLUGS||'').split(' ')[0]+'/healthz',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))\""]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
