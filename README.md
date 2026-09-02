@@ -7,6 +7,29 @@ Claude Code, Claude Desktop, or any MCP client, by any number of clients at once
 One small container. One port. Bring your own Intuit developer app. Full read/write access to the
 QuickBooks Online Accounting API.
 
+## What this solves (vs. running the Intuit MCP server directly)
+
+Intuit's MCP server is a local **stdio** program: it talks to **one client, for one company, on one
+machine**, over the process's stdin/stdout. And it accepts **only one transport connection per
+process, ever** — so if a client drops and reconnects (laptop sleep, wifi blip, app restart) it
+**crashes**, and a **second client can't connect at all**. That's fine for a single person poking at
+one company from one laptop; it falls apart the moment you want it reliable, shared, or multi-company.
+
+This gateway wraps it so you run it **once on a server** and use it from anywhere:
+
+| Running the Intuit MCP server directly | With this gateway |
+|---|---|
+| Local stdio, launched per machine | One service on a host, reachable over your network (LAN / VPN / Tailscale) |
+| One company per process you launch | **Many companies** behind one endpoint, picked by `/<slug>/` path |
+| One client only | **Many concurrent clients** — your desktops, teammates, automation |
+| Reconnect after a drop → crash / 502 | Reconnects never reach the upstream; it stays up |
+| A token chain per running copy (they clobber if shared) | **One token chain per company**, shared safely by all clients |
+| Runs beside each client | Central, always-on, restart-on-boot |
+
+It pulls this off by keeping **one persistent connection to each company's server** and
+**multiplexing** every client over it, so client churn never touches the upstream — details in
+[How it works](#how-it-works).
+
 > ⚠️ **Writes are live.** The MCP tools include `create_*` / `update_*` / `delete_*` and act on the
 > real books of whichever company you connect. Consider the read-only switches (below) for
 > companies you only want to query.
