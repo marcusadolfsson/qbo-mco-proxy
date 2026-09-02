@@ -151,6 +151,52 @@ Any MCP client that supports an SSE/remote server can use the same `http://HOST:
 
 ---
 
+## Example prompts
+
+Once connected, you talk to Claude in plain language and **name the company** — Claude routes to the
+matching server. (Examples use a company slugged `acme`.)
+
+**Look things up**
+- "In Acme, what's the current accounts receivable balance?"
+- "Show Acme's open invoices, oldest first."
+- "Find the vendor 'Hill Ward' in Acme and list their last 10 bills."
+- "What did Acme pay its landlord in Q2?"
+- "Look up customer Contoso in Acme and show their outstanding balance."
+
+**Reports**
+- "Pull Acme's P&L for last month."
+- "Give me Acme's balance sheet as of Dec 31."
+- "Show the A/R aging for Acme."
+- "General ledger for Acme's 'Meals & Entertainment' account, year to date."
+- "Trial balance for Acme at quarter end."
+
+**Record transactions** *(writes — see the safety note below)*
+- "In Acme, create a bill from Staples for $432.10 to Office Supplies, dated today."
+- "Record a $5,000 customer payment against invoice 1043 in Acme."
+- "Enter a journal entry in Acme: debit Rent 2,000, credit Cash 2,000, dated 6/1, memo 'June rent'."
+- "Create an invoice in Acme to Contoso for 10 hours of consulting at $150/hr."
+- "Add a new vendor 'Blue Sky Fuel' in Acme."
+
+**Bulk / recurring**
+- "Duplicate Acme's monthly rent bill for each month through December."
+- "Copy invoice 1154 in Acme for each of these dates and amounts: …"
+- "Enter these 15 receipts as bills in Acme, splitting each between two accounts."
+
+**Clean up / adjust**
+- "Update invoice 1043 in Acme — change the terms to Net 30."
+- "Void bill 890 in Acme."
+- "Reclassify the $500 in Acme's 'Ask My Accountant' to Office Supplies."
+
+**Across companies**
+- "Compare this month's revenue between Acme and Contoso."
+- "Which of my companies has an unpaid bill from AWS?"
+
+> 🔒 **Writes are live.** For anything that creates, updates, or deletes, tell Claude to **echo the
+> company and the exact entry and wait for your OK before posting**. A useful standing instruction:
+> *"Before any write, show me the company + payload and wait for me to confirm."*
+
+---
+
 ## Operations
 
 - **Logs:** `docker logs qbo-mcp`, or per company `sh docker/qbo-logs.sh <slug>` (also persisted to
