@@ -58,6 +58,13 @@ final class ReadOnlySQLTests: XCTestCase {
         XCTAssertEqual(try ReadOnlySQL.run(sql: "SELECT count(*) FROM t", path: path).rows.first?.first, .int(3))
     }
 
+    func testOneValueCantExhaustMemory() {
+        XCTAssertThrowsError(try ReadOnlySQL.run(sql: "SELECT length(randomblob(800000000))", path: path))
+        // printf stops at the same limit and yields NULL instead of throwing.
+        let capped = try? ReadOnlySQL.run(sql: "SELECT length(printf('%.*c', 500000000, 'x'))", path: path)
+        XCTAssertEqual(capped?.rows.first?.first, .null)
+    }
+
     func testLimitsTruncateAndTimeOut() throws {
         let limited = try ReadOnlySQL.run(sql: "SELECT * FROM t", path: path, limits: .init(maxRows: 2))
         XCTAssertEqual(limited.rows.count, 2)

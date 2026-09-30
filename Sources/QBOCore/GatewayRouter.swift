@@ -17,6 +17,12 @@ public final class GatewayRouter: HTTPHandler, @unchecked Sendable {
     private var accessKeys: [AccessKey] = []
     private var oauthCallback: (@Sendable ([String: String]) async -> HTTPResponse)?
     private var keyLastUsed: [UUID: Date] = [:]
+    /// SSE session ids that are open right now, so a large POST to a
+    /// session can be allowed before its body is read.
+    private var liveSessions: Set<String> = []
+    /// What a request without a key (or a live session) may send: enough
+    /// for any JSON-RPC message worth refusing.
+    static let unauthenticatedBodyLimit = 64 * 1024
     private let log: FileLog
     let keepAliveInterval: TimeInterval
 
@@ -70,6 +76,19 @@ public final class GatewayRouter: HTTPHandler, @unchecked Sendable {
             }
             return .denied
         }
+    }
+
+    /// Full-size bodies only for requests that carry a valid key or post to
+    /// a live SSE session (large attachments arrive that way); everyone else
+    /// is capped before the body is read.
+    public func bodyLimit(for head: HTTPRequest, peer: RemotePeer) -> Int {
+        if case .allowed = authorize(head) { return HTTPParser.maxBodyBytes }
+        let segments = head.path.split(separator: "/").map(String.init)
+        if head.method == "POST", segments.count == 2, segments[1] == "message",
+           let session = head.query["sessionId"], lock.withLock({ liveSessions.contains(session) }) {
+            return HTTPParser.maxBodyBytes
+        }
+        return Self.unauthenticatedBodyLimit
     }
 
     private static let unauthorized = HTTPResponse(
@@ -141,7 +160,9 @@ public final class GatewayRouter: HTTPHandler, @unchecked Sendable {
                 ("Content-Type", "text/event-stream"), ("Cache-Control", "no-cache"),
                 ("X-Accel-Buffering", "no"),
             ],
-            start: { stream in
+            start: { [weak self] stream in
+                self?.lock.withLock { _ = self?.liveSessions.insert(sessionID) }
+                stream.onClose { [weak self] in self?.lock.withLock { _ = self?.liveSessions.remove(sessionID) } }
                 Task {
                     await company.addSession(sessionID, stream: stream, caller: caller)
                     // First event: where to POST this session's messages.

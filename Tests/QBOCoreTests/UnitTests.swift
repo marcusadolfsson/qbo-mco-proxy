@@ -154,6 +154,13 @@ final class BatchTests: XCTestCase {
     }
 }
 
+final class QueryEscapingTests: XCTestCase {
+    func testCountLiteralsCantBreakOutOfQuotes() throws {
+        XCTAssertEqual(try CountQuery.literal("O'Brien"), "'O\\'Brien'")
+        XCTAssertThrowsError(try CountQuery.literal("x\\' OR Id > '0"))
+    }
+}
+
 final class NodeCheckTests: XCTestCase {
     func testVersionsAndThisMachine() {
         XCTAssertEqual(NodeCheck.major("v20.11.1"), 20)

@@ -22,6 +22,51 @@ public enum HTTPReply: Sendable {
 
 public protocol HTTPHandler: Sendable {
     func handle(_ request: HTTPRequest, peer: RemotePeer) async -> HTTPReply
+    /// How large a body this request may send, decided from its headers
+    /// alone, before any of the body is read.
+    func bodyLimit(for head: HTTPRequest, peer: RemotePeer) -> Int
+}
+
+extension HTTPHandler {
+    public func bodyLimit(for head: HTTPRequest, peer: RemotePeer) -> Int { HTTPParser.maxBodyBytes }
+}
+
+/// Server-wide limits and filters, shared by every connection.
+final class ConnectionPolicy: @unchecked Sendable {
+    private let lock = NSLock()
+    private var open = 0
+    private var localFilter: (@Sendable (String) -> Bool)?
+    let maxConnections: Int
+    /// Waiting for a request to finish arriving (slow-sender protection).
+    let requestTimeout: TimeInterval
+    /// An idle keep-alive connection between requests.
+    let idleTimeout: TimeInterval
+
+    init(maxConnections: Int = 512, requestTimeout: TimeInterval = 30, idleTimeout: TimeInterval = 120) {
+        self.maxConnections = maxConnections
+        self.requestTimeout = requestTimeout
+        self.idleTimeout = idleTimeout
+    }
+
+    func admit() -> Bool {
+        lock.withLock {
+            guard open < maxConnections else { return false }
+            open += 1
+            return true
+        }
+    }
+
+    func release() { lock.withLock { open -= 1 } }
+
+    var openConnections: Int { lock.withLock { open } }
+
+    func setLocalFilter(_ filter: (@Sendable (String) -> Bool)?) { lock.withLock { localFilter = filter } }
+
+    /// Whether a connection that arrived on this local address may proceed.
+    func allowsLocal(_ address: String) -> Bool {
+        guard let filter = lock.withLock({ localFilter }) else { return true }
+        return filter(address)
+    }
 }
 
 /// A server-sent-events stream on one connection.
@@ -115,10 +160,24 @@ public final class HTTPServer: @unchecked Sendable {
     private var listener: NWListener?
     private var stateStorage: State = .stopped
     private let onStateChange: @Sendable (State) -> Void
+    let policy: ConnectionPolicy
 
     public init(handler: HTTPHandler, onStateChange: @escaping @Sendable (State) -> Void = { _ in }) {
         self.handler = handler
         self.onStateChange = onStateChange
+        policy = ConnectionPolicy()
+    }
+
+    init(handler: HTTPHandler, policy: ConnectionPolicy, onStateChange: @escaping @Sendable (State) -> Void = { _ in }) {
+        self.handler = handler
+        self.onStateChange = onStateChange
+        self.policy = policy
+    }
+
+    /// Only accept connections that arrived on local addresses the filter
+    /// allows (e.g. loopback and Tailscale). Nil accepts every interface.
+    public func setLocalAddressFilter(_ filter: (@Sendable (String) -> Bool)?) {
+        policy.setLocalFilter(filter)
     }
 
     public var state: State { queue.sync { stateStorage } }
@@ -132,7 +191,11 @@ public final class HTTPServer: @unchecked Sendable {
             using: parameters, on: port == 0 ? .any : NWEndpoint.Port(rawValue: port)!)
         listener.newConnectionHandler = { [weak self] connection in
             guard let self else { return }
-            Connection(connection: connection, handler: self.handler).start()
+            guard self.policy.admit() else {
+                connection.cancel()
+                return
+            }
+            Connection(connection: connection, handler: self.handler, policy: self.policy).start()
         }
         listener.stateUpdateHandler = { [weak self] state in
             guard let self else { return }
@@ -198,14 +261,23 @@ public final class HTTPServer: @unchecked Sendable {
 private final class Connection: @unchecked Sendable {
     private let connection: NWConnection
     private let handler: HTTPHandler
+    private let policy: ConnectionPolicy
     private let queue = DispatchQueue(label: "qbobar.http.connection")
     private var buffer = Data()
     private var busy = false
     private var stream: EventStream?
+    /// Set once the local address passed the network filter.
+    private var admitted = false
+    private var released = false
+    /// The current request's body allowance, fixed when its headers arrive.
+    private var bodyLimit: Int?
+    private var lastActivity = Date()
+    private var timer: DispatchSourceTimer?
 
-    init(connection: NWConnection, handler: HTTPHandler) {
+    init(connection: NWConnection, handler: HTTPHandler, policy: ConnectionPolicy) {
         self.connection = connection
         self.handler = handler
+        self.policy = policy
     }
 
     func start() {
@@ -214,16 +286,54 @@ private final class Connection: @unchecked Sendable {
         // to break the cycle.
         connection.stateUpdateHandler = { state in
             switch state {
+            case .ready:
+                if self.policy.allowsLocal(self.localAddress) {
+                    self.admitted = true
+                    self.processBuffer()
+                } else {
+                    self.connection.cancel()
+                }
             case .failed, .cancelled:
                 self.stream?.markClosed()
                 self.stream = nil
+                self.timer?.cancel()
+                self.timer = nil
+                if !self.released {
+                    self.released = true
+                    self.policy.release()
+                }
                 self.connection.stateUpdateHandler = nil
             default:
                 break
             }
         }
+        startTimer()
         connection.start(queue: queue)
         receive()
+    }
+
+    /// The address this connection arrived on, e.g. 100.70.29.20 or 127.0.0.1.
+    private var localAddress: String {
+        guard case .hostPort(let host, _)? = connection.currentPath?.localEndpoint else { return "" }
+        var text = "\(host)"
+        if let percent = text.firstIndex(of: "%") { text = String(text[..<percent]) }
+        if text.hasPrefix("::ffff:") { text = String(text.dropFirst(7)) }
+        return text
+    }
+
+    /// Drops connections that stall: a request trickling in, or a keep-alive
+    /// connection left idle. Streams and requests being answered are exempt.
+    private func startTimer() {
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        let tick = min(5, max(0.5, min(policy.requestTimeout, policy.idleTimeout) / 2))
+        timer.schedule(deadline: .now() + tick, repeating: tick)
+        timer.setEventHandler { [weak self] in
+            guard let self, !self.busy, self.stream == nil else { return }
+            let limit = self.buffer.isEmpty ? self.policy.idleTimeout : self.policy.requestTimeout
+            if Date().timeIntervalSince(self.lastActivity) > limit { self.connection.cancel() }
+        }
+        timer.resume()
+        self.timer = timer
     }
 
     private var peer: RemotePeer {
@@ -248,6 +358,7 @@ private final class Connection: @unchecked Sendable {
         connection.receive(minimumIncompleteLength: 1, maximumLength: 1 << 20) {
             data, _, isComplete, error in
             if let data, !data.isEmpty {
+                self.lastActivity = Date()
                 if self.stream != nil {
                     // Nothing is expected from an SSE client after its GET.
                 } else {
@@ -267,7 +378,22 @@ private final class Connection: @unchecked Sendable {
 
     /// Called on `queue`.
     private func processBuffer() {
-        guard !busy, stream == nil else { return }
+        guard admitted, !busy, stream == nil, !buffer.isEmpty else { return }
+        // Decide the body allowance from the headers, before reading the body:
+        // without a key, a client can't make the server buffer 150 MB.
+        if bodyLimit == nil, let head = HTTPParser.head(buffer) {
+            let limit = handler.bodyLimit(for: head, peer: peer)
+            bodyLimit = limit
+            let declared = Int(head.headers["content-length"] ?? "") ?? 0
+            if declared > limit {
+                refuseTooLarge(limit)
+                return
+            }
+        }
+        if let limit = bodyLimit, buffer.count > limit + HTTPParser.maxHeaderBytes {
+            refuseTooLarge(limit)
+            return
+        }
         switch HTTPParser.parse(buffer) {
         case .incomplete:
             return
@@ -275,6 +401,7 @@ private final class Connection: @unchecked Sendable {
             send(HTTPResponse.text(status, reason + "\n"), keepAlive: false)
         case .request(let request, let consumed):
             buffer.removeFirst(consumed)
+            bodyLimit = nil
             busy = true
             let peer = self.peer
             Task {
@@ -285,7 +412,16 @@ private final class Connection: @unchecked Sendable {
     }
 
     /// Called on `queue`.
+    private func refuseTooLarge(_ limit: Int) {
+        let reason = limit < HTTPParser.maxBodyBytes
+            ? "Request body too large without an access key.\n" : "Request body too large.\n"
+        buffer.removeAll()
+        send(HTTPResponse.text(413, reason), keepAlive: false)
+    }
+
+    /// Called on `queue`.
     private func finish(_ reply: HTTPReply, for request: HTTPRequest) {
+        lastActivity = Date()
         switch reply {
         case .response(let response):
             busy = false

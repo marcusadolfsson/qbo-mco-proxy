@@ -433,7 +433,9 @@ public actor QBOCacheService {
         }
         let limit = min(max(Self.number(args["limit"]).map { Int($0) } ?? 50, 1), 500)
         let includeBills = args["include_bills"]?.boolValue ?? true
-        let quoted = vendor.replacingOccurrences(of: "'", with: "\\'")
+        // Backslashes dropped before quotes are escaped: QuickBooks escapes
+        // with a backslash, so one in the input could unescape our quote.
+        let quoted = vendor.replacingOccurrences(of: "\\", with: "").replacingOccurrences(of: "'", with: "\\'")
         do {
             let vendorResponse = try await fetcher.query(
                 "SELECT * FROM Vendor WHERE DisplayName LIKE '%\(quoted)%' AND Active IN (true, false) MAXRESULTS 100")

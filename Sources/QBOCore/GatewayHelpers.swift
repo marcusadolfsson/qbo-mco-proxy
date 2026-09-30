@@ -75,7 +75,11 @@ enum CountQuery {
 
     static func literal(_ value: JSON) throws -> String {
         switch value {
-        case .string(let text): return "'" + text.replacingOccurrences(of: "'", with: "\\'") + "'"
+        case .string(let text):
+            // QuickBooks escapes quotes with a backslash; a backslash in the
+            // value could then escape our closing quote instead.
+            guard !text.contains("\\") else { throw Unsupported(description: "Backslashes aren't supported in count criteria.") }
+            return "'" + text.replacingOccurrences(of: "'", with: "\\'") + "'"
         case .bool(let flag): return flag ? "true" : "false"
         case .number(let number):
             return number.rounded() == number ? String(Int64(number)) : String(number)

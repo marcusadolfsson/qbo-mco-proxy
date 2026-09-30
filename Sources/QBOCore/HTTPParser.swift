@@ -61,10 +61,26 @@ public enum HTTPParser {
     private static let crlfcrlf = Data("\r\n\r\n".utf8)
     private static let crlf = Data("\r\n".utf8)
 
-    public static func parse(_ buffer: Data) -> Result {
+    /// The request line and headers, once they've fully arrived, so the
+    /// server can decide how much body to accept before reading any of it.
+    public static func head(_ buffer: Data) -> HTTPRequest? {
+        guard case .head(let request, _) = parseHead(buffer) else { return nil }
+        return request
+    }
+
+    private enum HeadResult {
+        case incomplete
+        case invalid(status: Int, reason: String)
+        case head(HTTPRequest, bodyStart: Int)
+    }
+
+    private static func parseHead(_ buffer: Data) -> HeadResult {
         guard let headerEnd = buffer.range(of: crlfcrlf) else {
             return buffer.count > maxHeaderBytes
                 ? .invalid(status: 431, reason: "headers too large") : .incomplete
+        }
+        guard headerEnd.lowerBound - buffer.startIndex <= maxHeaderBytes else {
+            return .invalid(status: 431, reason: "headers too large")
         }
         let headerData = buffer[buffer.startIndex..<headerEnd.lowerBound]
         guard let headerText = String(data: headerData, encoding: .utf8) else {
@@ -85,10 +101,17 @@ public enum HTTPParser {
             let value = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
             headers[name] = headers[name].map { "\($0), \(value)" } ?? value
         }
+        let request = HTTPRequest(method: String(requestLine[0]), target: String(requestLine[1]), headers: headers)
+        return .head(request, bodyStart: headerEnd.upperBound)
+    }
 
-        let bodyStart = headerEnd.upperBound
-        var request = HTTPRequest(
-            method: String(requestLine[0]), target: String(requestLine[1]), headers: headers)
+    public static func parse(_ buffer: Data) -> Result {
+        let parsed = parseHead(buffer)
+        guard case .head(var request, let bodyStart) = parsed else {
+            if case .invalid(let status, let reason) = parsed { return .invalid(status: status, reason: reason) }
+            return .incomplete
+        }
+        let headers = request.headers
 
         if headers["transfer-encoding"]?.lowercased().contains("chunked") == true {
             switch decodeChunked(buffer, from: bodyStart) {

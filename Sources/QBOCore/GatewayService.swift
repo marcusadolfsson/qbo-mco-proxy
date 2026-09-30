@@ -150,6 +150,7 @@ public actor GatewayService {
             Task { await self?.setServerState(state) }
         }
         self.server = server
+        server.setLocalAddressFilter(state.settings.networkAccess.filter)
         do {
             try server.start(port: state.settings.port)
         } catch {
@@ -371,6 +372,7 @@ public actor GatewayService {
         state.settings = settings
         syncAccessKeys()
         if settings.port != previous.port { startServer() }
+        server?.setLocalAddressFilter(settings.networkAccess.filter)
         if settings.nodePath != previous.nodePath { await restartAll(onlyUnhealthy: true) }
     }
 

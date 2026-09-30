@@ -75,7 +75,7 @@ $(SERVER_STAGE)/VERSION: UPSTREAM_REF Resources/upstream/qbobar-entry.mjs
 	@$(MAKE) --no-print-directory node-check
 	@if [ ! -d $(SERVER_SRC)/.git ]; then git clone --quiet $(SERVER_REPO) $(SERVER_SRC); fi
 	cd $(SERVER_SRC) && git fetch --quiet origin && git checkout --quiet $(SERVER_REF)
-	cd $(SERVER_SRC) && $(NPM) ci --no-audit --no-fund && $(NPM) run build \
+	cd $(SERVER_SRC) && $(NPM) ci --ignore-scripts --no-audit --no-fund && $(NPM) run build \
 		&& $(NPM) prune --omit=dev --no-audit --no-fund
 	rm -rf $(SERVER_STAGE)
 	mkdir -p $(SERVER_STAGE)

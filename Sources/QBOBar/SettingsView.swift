@@ -462,6 +462,13 @@ private struct GeneralSettings: View {
                         .multilineTextAlignment(.trailing)
                         .textSelection(.enabled)
                 }
+                Picker("Accept connections from", selection: Binding(
+                    get: { model.settings.networkAccess },
+                    set: { value in Task { message = await model.updateSettings { $0.networkAccess = value } } })
+                ) {
+                    ForEach(NetworkAccess.allCases, id: \.self) { Text($0.label).tag($0) }
+                }
+                .help("The gateway serves plain HTTP. Tailscale encrypts traffic; a shared LAN or Wi-Fi doesn't.")
                 Picker("Address in client configs", selection: Binding(
                     get: { model.clientHost }, set: { model.setClientHost($0) })
                 ) {

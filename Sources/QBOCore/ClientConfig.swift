@@ -40,7 +40,7 @@ public enum HostAddresses {
         return result
     }
 
-    static func isTailscale(_ ip: String) -> Bool {
+    public static func isTailscale(_ ip: String) -> Bool {
         let parts = ip.split(separator: ".").compactMap { Int($0) }
         return parts.count == 4 && parts[0] == 100 && (64...127).contains(parts[1])
     }

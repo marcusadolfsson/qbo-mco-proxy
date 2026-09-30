@@ -268,6 +268,11 @@ public final class SQLiteDatabase: @unchecked Sendable {
     /// functions, recursive CTEs. Everything else — writes, ATTACH, PRAGMA,
     /// schema changes, transactions — is refused at prepare time.
     public func restrictToReading() {
+        // Caps what one query can make SQLite allocate: without these, a
+        // single `SELECT randomblob(800000000)` builds an 800 MB value before
+        // any row or byte limit of ours gets a look at it.
+        sqlite3_limit(handle, SQLITE_LIMIT_LENGTH, 10_000_000)
+        sqlite3_limit(handle, SQLITE_LIMIT_SQL_LENGTH, 100_000)
         sqlite3_set_authorizer(handle, { _, action, _, _, _, _ in
             switch action {
             case SQLITE_SELECT, SQLITE_READ, SQLITE_FUNCTION, SQLITE_RECURSIVE: SQLITE_OK
