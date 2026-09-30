@@ -1,0 +1,12 @@
+# Build products (the Intuit server is fetched into .build too)
+.build/
+.swiftpm/
+QBO MCP Proxy.app/
+QBOBar.app/
+dist/
+
+# Secrets, should one ever land here
+**/.env
+
+.DS_Store
+*.log

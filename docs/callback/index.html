@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex">
+<meta name="referrer" content="no-referrer">
+<title>QBO MCP Proxy Sign-in</title>
+<!--
+  OAuth redirect bounce for QBO MCP Proxy (macos/ in this repo).
+
+  Intuit only accepts HTTPS redirect URIs for production apps, but QBO MCP Proxy
+  runs on the user's Mac. QBO MCP Proxy puts its local port at the front of the
+  OAuth `state` ("8200-<nonce>"); this page forwards the browser, query string
+  untouched, to http://127.0.0.1:<port>/oauth/callback, where the app checks
+  the state and exchanges the code using the client secret it keeps locally.
+
+  Static and self-contained: no scripts or styles from anywhere else, nothing
+  logged or stored. The authorization code alone is useless without that
+  client secret, and it is single-use.
+-->
+<style>
+  :root { --bg: #f6f8fa; --card: #fff; --text: #1f2328; --muted: #59636e; --border: #d0d7de; --accent: #0969da; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0d1117; --card: #161b22; --text: #e6edf3; --muted: #9198a1; --border: #30363d; --accent: #4493f8; }
+  }
+  body { margin: 0; padding: 0 16px; min-height: 100vh; display: grid; place-items: center;
+         background: var(--bg); color: var(--text); font: 16px/1.5 -apple-system, system-ui, sans-serif; }
+  main { max-width: 34rem; width: 100%; background: var(--card); border: 1px solid var(--border);
+         border-radius: 12px; padding: 24px; box-sizing: border-box; }
+  h1 { font-size: 20px; margin: 0 0 8px; }
+  p { margin: 8px 0; }
+  .muted { color: var(--muted); font-size: 14px; }
+  textarea { width: 100%; box-sizing: border-box; font: 12px ui-monospace, monospace; padding: 8px;
+             border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text);
+             resize: vertical; min-height: 5em; }
+  button { font: inherit; padding: 6px 14px; border-radius: 6px; border: 1px solid var(--border);
+           background: var(--accent); color: #fff; cursor: pointer; }
+  [hidden] { display: none; }
+</style>
+</head>
+<body>
+<main>
+  <h1 id="title">Returning to QBO MCP Proxy…</h1>
+  <p id="lead">Handing your QuickBooks sign-in back to the app on your Mac.</p>
+  <div id="fallback" hidden>
+    <p>If QBO MCP Proxy doesn't confirm the connection, copy this address into the <b>Browser didn't come back?</b> field in QBO MCP Proxy's Add Company window:</p>
+    <textarea id="url" readonly></textarea>
+    <p><button id="copy" type="button">Copy</button> <span id="copied" class="muted" hidden>Copied.</span></p>
+  </div>
+  <p class="muted" id="note"></p>
+</main>
+<script>
+(function () {
+  var query = window.location.search;
+  var params = new URLSearchParams(query);
+  var state = params.get("state") || "";
+  var match = /^(\d{2,5})-[A-Za-z0-9]+$/.exec(state);
+  var port = match ? Number(match[1]) : 0;
+
+  var fallback = document.getElementById("fallback");
+  var field = document.getElementById("url");
+  field.value = window.location.href;
+  document.getElementById("copy").addEventListener("click", function () {
+    field.select();
+    (navigator.clipboard ? navigator.clipboard.writeText(field.value) : Promise.reject())
+      .catch(function () { document.execCommand("copy"); })
+      .finally(function () { document.getElementById("copied").hidden = false; });
+  });
+
+  if (params.get("error")) {
+    document.getElementById("title").textContent = "QuickBooks didn't connect";
+    document.getElementById("lead").textContent = params.get("error") === "access_denied"
+      ? "The sign-in was cancelled. Start again from the QBO MCP Proxy menu."
+      : "QuickBooks returned: " + params.get("error");
+  }
+
+  if (port >= 1024 && port <= 65535) {
+    // Show the manual route too, in case the app isn't reachable.
+    setTimeout(function () { fallback.hidden = false; }, 2500);
+    window.location.replace("http://127.0.0.1:" + port + "/oauth/callback" + query);
+  } else {
+    document.getElementById("title").textContent = "This sign-in didn't come from QBO MCP Proxy";
+    document.getElementById("lead").textContent =
+      "Start adding the company from the QBO MCP Proxy menu, so the app can recognize the sign-in when it returns.";
+    fallback.hidden = !params.get("code");
+  }
+})();
+</script>
+</body>
+</html>
