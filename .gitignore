@@ -10,3 +10,9 @@ dist/
 
 .DS_Store
 *.log
+
+# the private repo, cloned inside this one, and what is linked in from it
+/.private/
+/CLAUDE.md
+/CLAUDE.local.md
+.claude/skills
